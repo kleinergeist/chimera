@@ -1,5 +1,7 @@
 import os
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.responses import JSONResponse
+import httpx
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
@@ -44,6 +46,34 @@ def get_db():
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "message": "Chimera API is running"}
+
+
+@app.get("/api/gosearch")
+async def gosearch_proxy(username: str):
+    """Proxy endpoint that calls the gosearch container's HTTP API.
+
+    The gosearch service is expected at the hostname `gosearch` on port 8081
+    in docker-compose. You can override the full URL via the GOSEARCH_URL env var.
+    """
+    if not username:
+        raise HTTPException(status_code=400, detail="username query param is required")
+
+    gosearch_url = os.getenv("GOSEARCH_URL", "http://gosearch:8081/search")
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.get(gosearch_url, params={"username": username})
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"failed to reach gosearch service: {e}")
+
+    # Proxy the JSON response (or an error) through
+    try:
+        data = resp.json()
+    except Exception:
+        # Non-JSON response: return raw text
+        return JSONResponse(status_code=resp.status_code, content={"text": resp.text})
+
+    return JSONResponse(status_code=resp.status_code, content=data)
 
 @app.get("/api/users/me")
 async def get_current_user_info(
