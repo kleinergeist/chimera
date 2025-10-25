@@ -8,14 +8,21 @@ function App() {
   const [userData, setUserData] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [buckets, setBuckets] = useState([]);
+  const [accounts, setAccounts] = useState([]);
   const [showSignUp, setShowSignUp] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [selectedBucket, setSelectedBucket] = useState(null);
+  const [editingAccount, setEditingAccount] = useState(null);
+  const [showNewBucketForm, setShowNewBucketForm] = useState(false);
+  const [newBucketName, setNewBucketName] = useState('');
+  const [newBucketDescription, setNewBucketDescription] = useState('');
 
   useEffect(() => {
     if (user) {
       fetchUserData();
       fetchSessions();
       fetchBuckets();
+      fetchAccounts();
     }
   }, [user]);
 
@@ -67,6 +74,98 @@ function App() {
       setBuckets(data.buckets || []);
     } catch (error) {
       console.error('Error fetching buckets:', error);
+    }
+  };
+
+  const fetchAccounts = async () => {
+    try {
+      const token = await getToken();
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/accounts`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      const data = await response.json();
+      setAccounts(data.accounts || []);
+    } catch (error) {
+      console.error('Error fetching accounts:', error);
+    }
+  };
+
+  const updateAccountBucket = async (accountId, bucketId) => {
+    try {
+      const token = await getToken();
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/accounts/${accountId}/bucket`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ bucket_id: bucketId })
+      });
+      
+      if (response.ok) {
+        fetchAccounts();
+        setEditingAccount(null);
+      }
+    } catch (error) {
+      console.error('Error updating account bucket:', error);
+    }
+  };
+
+  const createBucket = async () => {
+    if (!newBucketName.trim()) return;
+    
+    try {
+      const token = await getToken();
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/buckets`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          bucket_name: newBucketName,
+          description: newBucketDescription
+        })
+      });
+      
+      if (response.ok) {
+        fetchBuckets();
+        setShowNewBucketForm(false);
+        setNewBucketName('');
+        setNewBucketDescription('');
+      }
+    } catch (error) {
+      console.error('Error creating bucket:', error);
+    }
+  };
+
+  const deleteBucket = async (bucketId) => {
+    if (!window.confirm('Are you sure you want to delete this bucket? Accounts will be unassigned.')) return;
+    
+    try {
+      const token = await getToken();
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/buckets/${bucketId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (response.ok) {
+        fetchBuckets();
+        fetchAccounts();
+        if (selectedBucket === bucketId) {
+          setSelectedBucket(null);
+        }
+      }
+    } catch (error) {
+      console.error('Error deleting bucket:', error);
     }
   };
 
@@ -168,18 +267,10 @@ function App() {
           <header className="bg-white shadow-sm border-b border-gray-200">
             <div className="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8">
               <div className="flex justify-between items-center">
+                <h1 className="text-2xl font-bold text-gray-900">
+                  Chimera
+                </h1>
                 <div className="flex items-center gap-4">
-                  <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-                    Chimera
-                  </h1>
-                  <span className="px-3 py-1 bg-blue-100 text-blue-800 text-xs font-semibold rounded-full">
-                    BETA
-                  </span>
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="text-sm text-gray-600">
-                    {user?.firstName || user?.emailAddresses[0].emailAddress}
-                  </span>
                   <UserButton afterSignOutUrl="/" />
                 </div>
               </div>
@@ -193,100 +284,180 @@ function App() {
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
               </div>
             ) : (
-              <div className="space-y-8">
-                {/* Welcome Section */}
-                <div className="bg-gradient-to-r from-blue-500 to-purple-600 rounded-2xl shadow-lg p-8 text-white">
-                  <h2 className="text-3xl font-bold mb-2">
-                    Welcome back, {user?.firstName || 'there'}!
+              <div className="space-y-6">
+                {/* Greeting */}
+                <div>
+                  <h2 className="text-3xl font-bold text-gray-900 mb-2">
+                    Welcome back, {user?.firstName || user?.emailAddresses[0]?.emailAddress?.split('@')[0] || 'there'}!
                   </h2>
-                  <p className="text-blue-100">
-                    Your account discovery dashboard is ready
-                  </p>
                 </div>
 
-                {/* Stats Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-gray-600 mb-1">Total Sessions</p>
-                        <p className="text-3xl font-bold text-gray-800">{sessions.length}</p>
+                {/* Main Dashboard Layout */}
+                <div className="grid grid-cols-12 gap-6">
+                  {/* Left Sidebar - Buckets */}
+                  <div className="col-span-3">
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-bold text-gray-900">Personas</h3>
+                        <button
+                          onClick={() => setShowNewBucketForm(!showNewBucketForm)}
+                          className="text-blue-600 hover:text-blue-700 text-xl font-bold"
+                          title="Add new bucket"
+                        >
+                          +
+                        </button>
                       </div>
-                      <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
-                        <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                        </svg>
+                      
+                      {showNewBucketForm && (
+                        <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                          <input
+                            type="text"
+                            placeholder="Bucket name"
+                            value={newBucketName}
+                            onChange={(e) => setNewBucketName(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-2 text-sm"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Description (optional)"
+                            value={newBucketDescription}
+                            onChange={(e) => setNewBucketDescription(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-2 text-sm"
+                          />
+                          <div className="flex gap-2">
+                            <button
+                              onClick={createBucket}
+                              className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
+                            >
+                              Create
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowNewBucketForm(false);
+                                setNewBucketName('');
+                                setNewBucketDescription('');
+                              }}
+                              className="flex-1 px-3 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-300"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div className="space-y-2">
+                        <button
+                          onClick={() => setSelectedBucket(null)}
+                          className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                            selectedBucket === null ? 'bg-gray-100' : 'hover:bg-gray-50'
+                          }`}
+                        >
+                          <div className="w-3 h-3 bg-gray-400 rounded-full"></div>
+                          <span className="text-sm font-medium">All Accounts</span>
+                        </button>
+                        {buckets.map((bucket) => (
+                          <div key={bucket.id} className="group relative">
+                            <button
+                              onClick={() => setSelectedBucket(bucket.id)}
+                              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                                selectedBucket === bucket.id ? 'bg-blue-50' : 'hover:bg-gray-50'
+                              }`}
+                            >
+                              <div className={`w-3 h-3 rounded-full ${
+                                bucket.bucket_name === 'Personal' ? 'bg-black' :
+                                bucket.bucket_name === 'Professional' ? 'bg-green-500' :
+                                bucket.bucket_name === 'Development' ? 'bg-purple-500' :
+                                'bg-red-500'
+                              }`}></div>
+                              <span className="text-sm font-medium flex-1 text-left">{bucket.bucket_name}</span>
+                            </button>
+                            <button
+                              onClick={() => deleteBucket(bucket.id)}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 text-sm font-bold"
+                              title="Delete bucket"
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </div>
 
-                  <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-gray-600 mb-1">Buckets</p>
-                        <p className="text-3xl font-bold text-gray-800">{buckets.length}</p>
-                      </div>
-                      <div className="w-12 h-12 bg-purple-100 rounded-full flex items-center justify-center">
-                        <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-                        </svg>
-                      </div>
+                  {/* Main Content - Account Details */}
+                  <div className="col-span-6">
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                      <h3 className="text-2xl font-bold text-gray-900 mb-6">
+                        {selectedBucket ? buckets.find(b => b.id === selectedBucket)?.bucket_name : 'All Accounts'}
+                      </h3>
+                      
+                      {accounts.filter(acc => !selectedBucket || acc.bucket?.id === selectedBucket).length === 0 ? (
+                        <div className="text-center py-12">
+                          <p className="text-gray-500">No accounts found</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-6">
+                          {accounts.filter(acc => !selectedBucket || acc.bucket?.id === selectedBucket).map((account) => (
+                            <div key={account.id} className="border-b border-gray-200 pb-4 last:border-0">
+                              <div className="flex items-start justify-between mb-2">
+                                <div className="flex-1">
+                                  <h4 className="font-semibold text-gray-900">{account.platform}</h4>
+                                  <p className="text-sm text-gray-600">{account.account_name}</p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {editingAccount === account.id ? (
+                                    <select
+                                      value={account.bucket?.id || ''}
+                                      onChange={(e) => updateAccountBucket(account.id, e.target.value || null)}
+                                      className="text-xs px-2 py-1 border border-gray-300 rounded"
+                                    >
+                                      <option value="">Unassigned</option>
+                                      {buckets.map(bucket => (
+                                        <option key={bucket.id} value={bucket.id}>
+                                          {bucket.bucket_name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <>
+                                      <span 
+                                        onClick={() => setEditingAccount(account.id)}
+                                        className="text-xs px-2 py-1 bg-gray-100 text-gray-700 rounded cursor-pointer hover:bg-gray-200"
+                                      >
+                                        {account.bucket?.name || 'Unassigned'}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 
-                  <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-gray-600 mb-1">Account ID</p>
-                        <p className="text-3xl font-bold text-gray-800">{userData?.id}</p>
+                  {/* Right Sidebar - Statistics */}
+                  <div className="col-span-3">
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                      <h3 className="text-lg font-bold text-gray-900 mb-4">Statistics</h3>
+                      <div className="space-y-4">
+                        <div>
+                          <p className="text-sm text-gray-600">Total Accounts</p>
+                          <p className="text-2xl font-bold text-gray-900">{accounts.length}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Total Buckets</p>
+                          <p className="text-2xl font-bold text-gray-900">{buckets.length}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-gray-600">Unassigned Accounts</p>
+                          <p className="text-2xl font-bold text-gray-900">
+                            {accounts.filter(a => !a.bucket).length}
+                          </p>
+                        </div>
                       </div>
-                      <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
-                        <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                        </svg>
-                      </div>
                     </div>
-                  </div>
-                </div>
-
-                {/* User Info Card */}
-                <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
-                  <h3 className="text-xl font-bold text-gray-800 mb-4">Account Information</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-600">Email</p>
-                      <p className="text-gray-800 font-medium">{userData?.email}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Member Since</p>
-                      <p className="text-gray-800 font-medium">
-                        {userData?.created_at ? new Date(userData.created_at).toLocaleDateString() : 'N/A'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Database ID</p>
-                      <p className="text-gray-800 font-medium">{userData?.id}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Clerk ID</p>
-                      <p className="text-gray-800 font-medium text-xs">{userData?.clerk_id}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Quick Actions */}
-                <div className="bg-white rounded-xl shadow-md p-6 border border-gray-100">
-                  <h3 className="text-xl font-bold text-gray-800 mb-4">Quick Actions</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <button className="px-6 py-4 bg-gradient-to-r from-blue-500 to-blue-600 text-white rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all duration-200 shadow-md hover:shadow-lg">
-                      Start New Session
-                    </button>
-                    <button className="px-6 py-4 bg-gradient-to-r from-purple-500 to-purple-600 text-white rounded-lg hover:from-purple-600 hover:to-purple-700 transition-all duration-200 shadow-md hover:shadow-lg">
-                      Create Bucket
-                    </button>
-                    <button className="px-6 py-4 bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 transition-all duration-200 shadow-md hover:shadow-lg">
-                      View Reports
-                    </button>
                   </div>
                 </div>
               </div>
@@ -299,4 +470,10 @@ function App() {
 }
 
 export default App;
+
+
+
+
+
+
 

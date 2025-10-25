@@ -105,3 +105,144 @@ async def get_user_buckets(
             for bucket in buckets
         ]
     }
+
+@app.get("/api/accounts")
+async def get_user_accounts(
+    user_info: dict = Depends(get_clerk_user_id),
+    db: Session = Depends(get_db)
+):
+    """Get all discovered accounts for the current user (Protected endpoint)"""
+    user = get_current_user(user_info, db)
+    
+    # Get all sessions for this user
+    sessions = db.query(DiagnosticSession).filter_by(user_id=user.id).all()
+    session_ids = [s.id for s in sessions]
+    
+    # Get all accounts from user's sessions
+    accounts = db.query(DiscoveredAccount).filter(DiscoveredAccount.session_id.in_(session_ids)).all()
+    
+    # Get assignments to know which bucket each account belongs to
+    account_data = []
+    for account in accounts:
+        assignment = db.query(AccountAssignment).filter_by(account_id=account.id).first()
+        bucket_info = None
+        if assignment:
+            bucket = db.query(UserBucket).filter_by(id=assignment.bucket_id).first()
+            if bucket:
+                bucket_info = {
+                    "id": bucket.id,
+                    "name": bucket.bucket_name
+                }
+        
+        account_data.append({
+            "id": account.id,
+            "account_name": account.account_name,
+            "email": account.email,
+            "platform": account.platform,
+            "metadata": account.account_metadata,
+            "bucket": bucket_info,
+            "created_at": account.created_at.isoformat() if account.created_at else None
+        })
+    
+    return {
+        "count": len(account_data),
+        "accounts": account_data
+    }
+
+@app.put("/api/accounts/{account_id}/bucket")
+async def update_account_bucket(
+    account_id: int,
+    bucket_data: dict,
+    user_info: dict = Depends(get_clerk_user_id),
+    db: Session = Depends(get_db)
+):
+    """Update which bucket an account is assigned to"""
+    user = get_current_user(user_info, db)
+    bucket_id = bucket_data.get("bucket_id")
+    
+    # Verify account belongs to user's sessions
+    sessions = db.query(DiagnosticSession).filter_by(user_id=user.id).all()
+    session_ids = [s.id for s in sessions]
+    account = db.query(DiscoveredAccount).filter(
+        DiscoveredAccount.id == account_id,
+        DiscoveredAccount.session_id.in_(session_ids)
+    ).first()
+    
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    
+    # Find existing assignment
+    assignment = db.query(AccountAssignment).filter_by(account_id=account_id).first()
+    
+    if bucket_id:
+        # Verify bucket belongs to user
+        bucket = db.query(UserBucket).filter_by(id=bucket_id, user_id=user.id).first()
+        if not bucket:
+            raise HTTPException(status_code=404, detail="Bucket not found")
+        
+        if assignment:
+            assignment.bucket_id = bucket_id
+        else:
+            assignment = AccountAssignment(
+                account_id=account_id,
+                bucket_id=bucket_id
+            )
+            db.add(assignment)
+    else:
+        # Remove assignment if bucket_id is None
+        if assignment:
+            db.delete(assignment)
+    
+    db.commit()
+    return {"message": "Account bucket updated"}
+
+@app.post("/api/buckets")
+async def create_bucket(
+    bucket_data: dict,
+    user_info: dict = Depends(get_clerk_user_id),
+    db: Session = Depends(get_db)
+):
+    """Create a new bucket"""
+    user = get_current_user(user_info, db)
+    
+    bucket_name = bucket_data.get("bucket_name")
+    description = bucket_data.get("description", "")
+    
+    if not bucket_name:
+        raise HTTPException(status_code=400, detail="Bucket name is required")
+    
+    new_bucket = UserBucket(
+        user_id=user.id,
+        bucket_name=bucket_name,
+        description=description
+    )
+    db.add(new_bucket)
+    db.commit()
+    db.refresh(new_bucket)
+    
+    return {
+        "id": new_bucket.id,
+        "bucket_name": new_bucket.bucket_name,
+        "description": new_bucket.description
+    }
+
+@app.delete("/api/buckets/{bucket_id}")
+async def delete_bucket(
+    bucket_id: int,
+    user_info: dict = Depends(get_clerk_user_id),
+    db: Session = Depends(get_db)
+):
+    """Delete a bucket"""
+    user = get_current_user(user_info, db)
+    
+    bucket = db.query(UserBucket).filter_by(id=bucket_id, user_id=user.id).first()
+    if not bucket:
+        raise HTTPException(status_code=404, detail="Bucket not found")
+    
+    # Delete associated assignments
+    db.query(AccountAssignment).filter_by(bucket_id=bucket_id).delete()
+    
+    db.delete(bucket)
+    db.commit()
+    
+    return {"message": "Bucket deleted"}
