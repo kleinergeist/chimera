@@ -16,6 +16,10 @@ function App() {
   const [showNewBucketForm, setShowNewBucketForm] = useState(false);
   const [newBucketName, setNewBucketName] = useState('');
   const [newBucketDescription, setNewBucketDescription] = useState('');
+  const [showSearchForm, setShowSearchForm] = useState(false);
+  const [searchUsername, setSearchUsername] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [searchResult, setSearchResult] = useState(null);
 
   useEffect(() => {
     if (user) {
@@ -169,6 +173,42 @@ function App() {
     }
   };
 
+  const searchAccounts = async () => {
+    if (!searchUsername.trim()) return;
+    
+    setSearching(true);
+    setSearchResult(null);
+    
+    try {
+      const token = await getToken();
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/search-accounts`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ username: searchUsername })
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setSearchResult(data);
+        fetchAccounts();
+        fetchSessions();
+        setSearchUsername('');
+      } else {
+        const error = await response.json();
+        alert(`Search failed: ${error.detail || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error searching accounts:', error);
+      alert('Failed to search accounts. Please try again.');
+    } finally {
+      setSearching(false);
+    }
+  };
+
   if (!isLoaded) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 flex items-center justify-center">
@@ -285,12 +325,76 @@ function App() {
               </div>
             ) : (
               <div className="space-y-6">
-                {/* Greeting */}
-                <div>
-                  <h2 className="text-3xl font-bold text-gray-900 mb-2">
+                {/* Greeting and Search */}
+                <div className="flex items-center justify-between">
+                  <h2 className="text-3xl font-bold text-gray-900">
                     Welcome back, {user?.firstName || user?.emailAddresses[0]?.emailAddress?.split('@')[0] || 'there'}!
                   </h2>
+                  <button
+                    onClick={() => setShowSearchForm(!showSearchForm)}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    Search Accounts
+                  </button>
                 </div>
+
+                {/* Search Form */}
+                {showSearchForm && (
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                    <h3 className="text-lg font-bold text-gray-900 mb-4">Search for Your Accounts</h3>
+                    <p className="text-sm text-gray-600 mb-4">
+                      Enter a username to search across 300+ platforms and discover your accounts.
+                    </p>
+                    <div className="flex gap-3">
+                      <input
+                        type="text"
+                        placeholder="Enter username..."
+                        value={searchUsername}
+                        onChange={(e) => setSearchUsername(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && searchAccounts()}
+                        disabled={searching}
+                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      />
+                      <button
+                        onClick={searchAccounts}
+                        disabled={searching || !searchUsername.trim()}
+                        className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {searching ? (
+                          <div className="flex items-center gap-2">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                            Searching...
+                          </div>
+                        ) : (
+                          'Search'
+                        )}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowSearchForm(false);
+                          setSearchResult(null);
+                          setSearchUsername('');
+                        }}
+                        disabled={searching}
+                        className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    
+                    {searchResult && (
+                      <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                        <p className="text-green-800 font-semibold">✓ Search completed!</p>
+                        <p className="text-sm text-green-700 mt-1">
+                          Found {searchResult.total_found} platforms, saved {searchResult.new_accounts_saved} new accounts.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Main Dashboard Layout */}
                 <div className="grid grid-cols-12 gap-6">
@@ -403,6 +507,19 @@ function App() {
                                 <div className="flex-1">
                                   <h4 className="font-semibold text-gray-900">{account.platform}</h4>
                                   <p className="text-sm text-gray-600">{account.account_name}</p>
+                                  {account.url && (
+                                    <a 
+                                      href={account.url} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer"
+                                      className="text-xs text-blue-600 hover:text-blue-800 hover:underline flex items-center gap-1 mt-1"
+                                    >
+                                      Visit profile
+                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                      </svg>
+                                    </a>
+                                  )}
                                 </div>
                                 <div className="flex items-center gap-2">
                                   {editingAccount === account.id ? (

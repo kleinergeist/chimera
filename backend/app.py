@@ -1,4 +1,5 @@
 import os
+import json
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import JSONResponse
 import httpx
@@ -164,11 +165,21 @@ async def get_user_accounts(
                     "name": bucket.bucket_name
                 }
         
+        # Parse metadata to get URL
+        url = None
+        if account.account_metadata:
+            try:
+                metadata = json.loads(account.account_metadata)
+                url = metadata.get("url")
+            except:
+                pass
+        
         account_data.append({
             "id": account.id,
             "account_name": account.account_name,
             "email": account.email,
             "platform": account.platform,
+            "url": url,
             "metadata": account.account_metadata,
             "bucket": bucket_info,
             "created_at": account.created_at.isoformat() if account.created_at else None
@@ -276,3 +287,72 @@ async def delete_bucket(
     db.commit()
     
     return {"message": "Bucket deleted"}
+
+@app.post("/api/search-accounts")
+async def search_and_save_accounts(
+    search_data: dict,
+    user_info: dict = Depends(get_clerk_user_id),
+    db: Session = Depends(get_db)
+):
+    """Search for accounts using gosearch and save to discovered_accounts"""
+    user = get_current_user(user_info, db)
+    username = search_data.get("username")
+    
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    
+    # Call gosearch service
+    gosearch_url = os.getenv("GOSEARCH_URL", "http://gosearch:8081/search")
+    
+    try:
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            resp = await client.get(gosearch_url, params={"username": username})
+            resp.raise_for_status()
+            gosearch_data = resp.json()
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to reach gosearch service: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error calling gosearch: {e}")
+    
+    # Create a new diagnostic session for this search
+    session = DiagnosticSession(
+        user_id=user.id,
+        status="completed"
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    
+    # Parse and save discovered accounts
+    platforms = gosearch_data.get("platforms", [])
+    saved_count = 0
+    
+    for platform in platforms:
+        if platform.get("found"):
+            # Check if this account already exists for this user
+            existing = db.query(DiscoveredAccount).join(DiagnosticSession).filter(
+                DiagnosticSession.user_id == user.id,
+                DiscoveredAccount.platform == platform["name"],
+                DiscoveredAccount.account_name == username
+            ).first()
+            
+            if not existing:
+                account = DiscoveredAccount(
+                    session_id=session.id,
+                    account_name=username,
+                    email=None,  # gosearch doesn't provide email
+                    platform=platform["name"],
+                    account_metadata=json.dumps({"url": platform["url"]})
+                )
+                db.add(account)
+                saved_count += 1
+    
+    db.commit()
+    
+    return {
+        "message": "Search completed",
+        "username": username,
+        "total_found": len(platforms),
+        "new_accounts_saved": saved_count,
+        "session_id": session.id
+    }

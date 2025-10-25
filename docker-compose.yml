@@ -40,8 +40,9 @@ services:
       - PORT=8081
     ports:
       - '8081:8081'
-    volumes:
-      - ./gosearch:/app
+    # Remove volume mount - it overwrites the compiled binary
+    # volumes:
+    #   - ./gosearch:/app
     restart: unless-stopped
 
   frontend:

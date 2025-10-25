@@ -1,26 +1,27 @@
-FROM golang:1.21-alpine
+FROM golang:1.24-alpine
 
 RUN apk add --no-cache git bash
 
 WORKDIR /app
 
-# Copy go module files and download dependencies (keeps builds fast)
-COPY go.mod .
-ENV GOBIN=/go/bin
-ENV PATH=/go/bin:/usr/local/go/bin:$PATH
+# Copy go module files
+COPY go.mod go.sum* ./
 
-# Ensure GOPATH and download deps early so Docker can cache them
-RUN go env -w GOPATH=/go
+# Initialize go mod if go.sum doesn't exist
+RUN go mod tidy || true
 RUN go mod download || true
 
-# Install the external gosearch binary at build time so runtime is fast
+# Install gosearch binary at build time
 RUN go install github.com/ibnaleem/gosearch@latest || true
 
-# Copy the app
+# Copy the app source
 COPY . .
 
-# Build the local proxy server
-RUN go build -o server .
+# Build the server with verbose output
+RUN go build -v -o server . || (echo "Build failed" && exit 1)
+
+# Verify the binary exists
+RUN test -f /app/server || (echo "Binary not found!" && exit 1)
 
 EXPOSE 8081
 

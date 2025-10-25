@@ -13,11 +13,18 @@ import (
     "log"
 )
 
+type Platform struct {
+    Name   string `json:"name"`
+    URL    string `json:"url"`
+    Found  bool   `json:"found"`
+}
+
 type ExecResult struct {
-    Username string `json:"username"`
-    ExitCode int    `json:"exit_code"`
-    Stdout   string `json:"stdout"`
-    Stderr   string `json:"stderr"`
+    Username  string     `json:"username"`
+    ExitCode  int        `json:"exit_code"`
+    Platforms []Platform `json:"platforms"`
+    RawOutput string     `json:"raw_output"`
+    Stderr    string     `json:"stderr"`
 }
 
 func installGosearch(ctx context.Context) error {
@@ -44,6 +51,88 @@ func gosearchPath() (string, error) {
     return filepath.Join(gopath, "bin", "gosearch"), nil
 }
 
+func stripANSI(str string) string {
+    // Remove ANSI escape codes
+    ansiRegex := strings.NewReplacer(
+        "\u001b[93m", "",
+        "\u001b[92m", "",
+        "\u001b[91m", "",
+        "\u001b[0m", "",
+    )
+    result := ansiRegex.Replace(str)
+    
+    // Remove any remaining escape sequences
+    for strings.Contains(result, "\u001b") {
+        start := strings.Index(result, "\u001b")
+        if start == -1 {
+            break
+        }
+        end := start + 1
+        for end < len(result) && result[end] != 'm' {
+            end++
+        }
+        if end < len(result) {
+            result = result[:start] + result[end+1:]
+        } else {
+            break
+        }
+    }
+    
+    return result
+}
+
+func parseGosearchOutput(output string) []Platform {
+    var platforms []Platform
+    lines := strings.Split(output, "\n")
+    
+    for _, line := range lines {
+        line = stripANSI(line)
+        line = strings.TrimSpace(line)
+        
+        // Skip empty lines, headers, and info lines
+        if line == "" || 
+           strings.HasPrefix(line, "::") || 
+           strings.HasPrefix(line, "[*]") ||
+           strings.HasPrefix(line, "⎯") ||
+           strings.HasPrefix(line, "[!]") ||
+           strings.HasPrefix(line, "┌") ||
+           strings.HasPrefix(line, "├") ||
+           strings.HasPrefix(line, "└") ||
+           strings.HasPrefix(line, "│") ||
+           strings.Contains(line, "___") ||
+           strings.Contains(line, "Number of profiles") ||
+           strings.Contains(line, "Total time taken") {
+            continue
+        }
+        
+        // Look for platform result lines with [+] or [?] markers
+        if (strings.HasPrefix(line, "[+]") || strings.HasPrefix(line, "[?]")) && strings.Contains(line, "http") {
+            // Remove the status marker
+            line = strings.TrimPrefix(line, "[+]")
+            line = strings.TrimPrefix(line, "[?]")
+            line = strings.TrimSpace(line)
+            
+            // Split by colon to get platform name and URL
+            parts := strings.SplitN(line, ":", 2)
+            if len(parts) >= 2 {
+                platformName := strings.TrimSpace(parts[0])
+                url := strings.TrimSpace(parts[1])
+                
+                // Ensure URL starts with http
+                if strings.HasPrefix(url, "http") {
+                    platforms = append(platforms, Platform{
+                        Name:  platformName,
+                        URL:   url,
+                        Found: true,
+                    })
+                }
+            }
+        }
+    }
+    
+    return platforms
+}
+
 func runGosearch(ctx context.Context, username string) (ExecResult, error) {
     path, err := gosearchPath()
     if err != nil {
@@ -66,11 +155,15 @@ func runGosearch(ctx context.Context, username string) (ExecResult, error) {
         }
     }
 
+    outputStr := string(out)
+    platforms := parseGosearchOutput(outputStr)
+
     return ExecResult{
-        Username: username,
-        ExitCode: exitCode,
-        Stdout:   string(out),
-        Stderr:   stderrStr,
+        Username:  username,
+        ExitCode:  exitCode,
+        Platforms: platforms,
+        RawOutput: outputStr,
+        Stderr:    stderrStr,
     }, nil
 }
 
