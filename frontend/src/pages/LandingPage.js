@@ -4,6 +4,16 @@ import { useState } from 'react';
 function LandingPage() {
   const [showSignUp, setShowSignUp] = useState(false);
 
+  const nicknames = ['lovergirl69', 'xXDarkLord420Xx', 'CutiePie2003', 'MemeLord9000', 'GamerBoi'];
+  const websites = ['LinkedIn', 'Facebook', 'your portfolio', 'Instagram', 'Twitter'];
+
+  // Create triple array for seamless infinite scroll
+  const infiniteNicknames = [...nicknames, ...nicknames, ...nicknames];
+  const infiniteWebsites = [...websites, ...websites, ...websites];
+
+  const nicknameAnimationDuration = nicknames.length * 3; // 3 seconds per item
+  const websiteAnimationDuration = websites.length * 3;
+
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <div className="max-w-6xl w-full grid md:grid-cols-2 gap-8 items-center">
@@ -13,10 +23,67 @@ function LandingPage() {
             Chimera
           </h1>
           <p className="text-2xl text-gray-700">
-            Discover, organize, and manage your digital accounts
-          </p>
+One you. Many faces. Zero regrets.          </p>
           <p className="text-lg text-gray-600">
-            A modern platform for account discovery and intelligent categorization
+Online persona management made easy. <br />
+Because your digital foorprint matters.          </p>
+          <p className="text-base text-gray-500 italic flex flex-wrap items-center justify-center md:justify-start">
+            <span className="whitespace-nowrap">because&nbsp;</span>
+            <span className="font-semibold text-purple-600 inline-block overflow-hidden h-6 relative" style={{ width: '180px' }}>
+              <style>{`
+                @keyframes scrollNicknames {
+                  ${infiniteNicknames.map((_, idx) => {
+                    const percent = (idx / nicknames.length) * 100;
+                    const nextPercent = ((idx + 0.3) / nicknames.length) * 100;
+                    return `
+                      ${percent}% { transform: translateY(-${idx * 24}px); }
+                      ${nextPercent}% { transform: translateY(-${(idx + 1) * 24}px); }
+                      ${((idx + 1) / nicknames.length) * 100}% { transform: translateY(-${(idx + 1) * 24}px); }
+                    `;
+                  }).join('')}
+                }
+              `}</style>
+              <span 
+                className="absolute"
+                style={{ 
+                  display: 'flex',
+                  flexDirection: 'column',
+                  animation: `scrollNicknames ${nicknameAnimationDuration}s ease-in-out infinite`
+                }}
+              >
+                {infiniteNicknames.map((nickname, idx) => (
+                  <span key={idx} className="h-6 leading-6">{nickname}</span>
+                ))}
+              </span>
+            </span>
+            <span className="whitespace-nowrap">&nbsp;doesn't need to be on&nbsp;</span>
+            <span className="font-semibold text-blue-600 inline-block overflow-hidden h-6 relative" style={{ width: '120px' }}>
+              <style>{`
+                @keyframes scrollWebsites {
+                  ${infiniteWebsites.map((_, idx) => {
+                    const percent = (idx / websites.length) * 100;
+                    const nextPercent = ((idx + 0.3) / websites.length) * 100;
+                    return `
+                      ${percent}% { transform: translateY(-${idx * 24}px); }
+                      ${nextPercent}% { transform: translateY(-${(idx + 1) * 24}px); }
+                      ${((idx + 1) / websites.length) * 100}% { transform: translateY(-${(idx + 1) * 24}px); }
+                    `;
+                  }).join('')}
+                }
+              `}</style>
+              <span 
+                className="absolute"
+                style={{ 
+                  display: 'flex',
+                  flexDirection: 'column',
+                  animation: `scrollWebsites ${websiteAnimationDuration}s ease-in-out infinite`
+                }}
+              >
+                {infiniteWebsites.map((website, idx) => (
+                  <span key={idx} className="h-6 leading-6">{website}</span>
+                ))}
+              </span>
+            </span>
           </p>
           <div className="flex gap-4 justify-center md:justify-start">
             <div className="flex items-center gap-2">
@@ -36,49 +103,47 @@ function LandingPage() {
 
         {/* Right side - Auth */}
         <div className="flex justify-center">
-          <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+          <div className="max-w-sm w-full">
             {!showSignUp ? (
-              <div className="space-y-4">
-                <h2 className="text-2xl font-bold text-gray-800 text-center">Welcome Back</h2>
-                <SignIn 
-                  appearance={{
-                    elements: {
-                      rootBox: "w-full",
-                      card: "shadow-none"
-                    }
-                  }}
-                />
-                <p className="text-center text-sm text-gray-600">
-                  Don't have an account?{' '}
-                  <button 
-                    onClick={() => setShowSignUp(true)}
-                    className="text-blue-600 hover:text-blue-700 font-semibold"
-                  >
-                    Sign up
-                  </button>
-                </p>
-              </div>
+              <SignIn 
+                appearance={{
+                  elements: {
+                    rootBox: "w-full",
+                    card: "shadow-md w-full mx-auto",
+                    headerTitle: "text-center",
+                    headerSubtitle: "text-center",
+                    socialButtonsBlockButton: "justify-center",
+                    formButtonPrimary: "w-full",
+                    formFieldInput: "w-full",
+                    footer: "text-center",
+                    footerAction: "text-center justify-center",
+                    footerActionText: "text-center",
+                    footerActionLink: "text-center",
+                    identityPreview: "w-full",
+                    formFieldRow: "w-full"
+                  }
+                }}
+              />
             ) : (
-              <div className="space-y-4">
-                <h2 className="text-2xl font-bold text-gray-800 text-center">Create Account</h2>
-                <SignUp 
-                  appearance={{
-                    elements: {
-                      rootBox: "w-full",
-                      card: "shadow-none"
-                    }
-                  }}
-                />
-                <p className="text-center text-sm text-gray-600">
-                  Already have an account?{' '}
-                  <button 
-                    onClick={() => setShowSignUp(false)}
-                    className="text-blue-600 hover:text-blue-700 font-semibold"
-                  >
-                    Sign in
-                  </button>
-                </p>
-              </div>
+              <SignUp 
+                appearance={{
+                  elements: {
+                    rootBox: "w-full",
+                    card: "shadow-md w-full mx-auto",
+                    headerTitle: "text-center",
+                    headerSubtitle: "text-center",
+                    socialButtonsBlockButton: "justify-center",
+                    formButtonPrimary: "w-full",
+                    formFieldInput: "w-full",
+                    footer: "text-center",
+                    footerAction: "text-center justify-center",
+                    footerActionText: "text-center",
+                    footerActionLink: "text-center",
+                    identityPreview: "w-full",
+                    formFieldRow: "w-full"
+                  }
+                }}
+              />
             )}
           </div>
         </div>
