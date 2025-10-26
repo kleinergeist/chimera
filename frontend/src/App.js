@@ -20,6 +20,14 @@ function App() {
   const [searchUsername, setSearchUsername] = useState('');
   const [searching, setSearching] = useState(false);
   const [searchResult, setSearchResult] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [generatingSummary, setGeneratingSummary] = useState(false);
+  const [splittingPersonas, setSplittingPersonas] = useState(false);
+  const [personaResult, setPersonaResult] = useState(null);
+  const [editingBucket, setEditingBucket] = useState(null);
+  const [editBucketName, setEditBucketName] = useState('');
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [bucketToDelete, setBucketToDelete] = useState(null);
 
   useEffect(() => {
     if (user) {
@@ -29,6 +37,12 @@ function App() {
       fetchAccounts();
     }
   }, [user]);
+
+  // Clear summary and persona result when switching personas
+  useEffect(() => {
+    setSummary(null);
+    setPersonaResult(null);
+  }, [selectedBucket]);
 
   const fetchUserData = async () => {
     setLoading(true);
@@ -148,13 +162,54 @@ function App() {
     }
   };
 
-  const deleteBucket = async (bucketId) => {
-    if (!window.confirm('Are you sure you want to delete this bucket? Accounts will be unassigned.')) return;
+  const updateBucket = async (bucketId, newName) => {
+    if (!newName.trim()) return;
     
     try {
       const token = await getToken();
       const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
       const response = await fetch(`${apiUrl}/api/buckets/${bucketId}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ bucket_name: newName })
+      });
+      
+      if (response.ok) {
+        fetchBuckets();
+        setEditingBucket(null);
+        setEditBucketName('');
+      } else {
+        const error = await response.json();
+        alert(`Failed to update bucket: ${error.detail || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error updating bucket:', error);
+      alert('Failed to update bucket. Please try again.');
+    }
+  };
+
+  const confirmDeleteBucket = (bucketId) => {
+    // Find the bucket to check if it's "Unassigned"
+    const bucket = buckets.find(b => b.id === bucketId);
+    if (bucket && bucket.bucket_name.toLowerCase().trim() === 'unassigned') {
+      alert('Cannot delete the "Unassigned" bucket. This is a system bucket that must always exist.');
+      return;
+    }
+    
+    setBucketToDelete(bucketId);
+    setShowDeleteModal(true);
+  };
+
+  const deleteBucket = async () => {
+    if (!bucketToDelete) return;
+    
+    try {
+      const token = await getToken();
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiUrl}/api/buckets/${bucketToDelete}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -164,12 +219,18 @@ function App() {
       if (response.ok) {
         fetchBuckets();
         fetchAccounts();
-        if (selectedBucket === bucketId) {
+        if (selectedBucket === bucketToDelete) {
           setSelectedBucket(null);
         }
+        setShowDeleteModal(false);
+        setBucketToDelete(null);
+      } else {
+        const error = await response.json();
+        alert(`Failed to delete bucket: ${error.detail || 'Unknown error'}`);
       }
     } catch (error) {
       console.error('Error deleting bucket:', error);
+      alert('Failed to delete bucket. Please try again.');
     }
   };
 
@@ -206,6 +267,68 @@ function App() {
       alert('Failed to search accounts. Please try again.');
     } finally {
       setSearching(false);
+    }
+  };
+
+  const generateSummary = async () => {
+    setGeneratingSummary(true);
+    try {
+      const token = await getToken();
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+      
+      // Prepare request body with persona filter
+      const requestBody = {};
+      if (selectedBucket) {
+        requestBody.bucket_id = selectedBucket;
+      }
+      
+      const response = await fetch(`${apiUrl}/api/generate-summary`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+      const data = await response.json();
+      setSummary(data.summary);
+    } catch (error) {
+      console.error('Error generating summary:', error);
+    } finally {
+      setGeneratingSummary(false);
+    }
+  };
+
+  const splitPersonas = async () => {
+    setSplittingPersonas(true);
+    try {
+      const token = await getToken();
+      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+      
+      // Prepare request body with persona filter
+      const requestBody = {};
+      if (selectedBucket) {
+        requestBody.bucket_id = selectedBucket;
+      }
+      
+      const response = await fetch(`${apiUrl}/api/split-personas`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+      const data = await response.json();
+      setPersonaResult(data);
+      // Refresh buckets and accounts to show the new organization
+      fetchBuckets();
+      fetchAccounts();
+    } catch (error) {
+      console.error('Error splitting personas:', error);
+      alert('Failed to split personas. Please try again.');
+    } finally {
+      setSplittingPersonas(false);
     }
   };
 
@@ -461,27 +584,66 @@ function App() {
                         </button>
                         {buckets.map((bucket) => (
                           <div key={bucket.id} className="group relative">
-                            <button
-                              onClick={() => setSelectedBucket(bucket.id)}
-                              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
-                                selectedBucket === bucket.id ? 'bg-blue-50' : 'hover:bg-gray-50'
-                              }`}
-                            >
-                              <div className={`w-3 h-3 rounded-full ${
-                                bucket.bucket_name === 'Personal' ? 'bg-black' :
-                                bucket.bucket_name === 'Professional' ? 'bg-green-500' :
-                                bucket.bucket_name === 'Development' ? 'bg-purple-500' :
-                                'bg-red-500'
-                              }`}></div>
-                              <span className="text-sm font-medium flex-1 text-left">{bucket.bucket_name}</span>
-                            </button>
-                            <button
-                              onClick={() => deleteBucket(bucket.id)}
-                              className="absolute right-2 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-700 text-sm font-bold"
-                              title="Delete bucket"
-                            >
-                              ×
-                            </button>
+                            {editingBucket === bucket.id ? (
+                              <div className="flex items-center gap-2 px-2 py-2 bg-blue-50 rounded-lg">
+                                <input
+                                  type="text"
+                                  value={editBucketName}
+                                  onChange={(e) => setEditBucketName(e.target.value)}
+                                  onKeyPress={(e) => {
+                                    if (e.key === 'Enter') {
+                                      updateBucket(bucket.id, editBucketName);
+                                    }
+                                  }}
+                                  className="flex-1 px-2 py-1 text-sm border border-blue-300 rounded"
+                                  autoFocus
+                                />
+                                <button
+                                  onClick={() => updateBucket(bucket.id, editBucketName)}
+                                  className="text-green-600 hover:text-green-700 text-sm font-bold"
+                                  title="Save"
+                                >
+                                  ✓
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setEditingBucket(null);
+                                    setEditBucketName('');
+                                  }}
+                                  className="text-gray-500 hover:text-gray-700 text-sm font-bold"
+                                  title="Cancel"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => setSelectedBucket(bucket.id)}
+                                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors ${
+                                    selectedBucket === bucket.id ? 'bg-blue-50' : 'hover:bg-gray-50'
+                                  }`}
+                                >
+                                  <span className="text-lg">
+                                    {bucket.bucket_name.toLowerCase().includes('professional') || bucket.bucket_name.toLowerCase().includes('work') || bucket.bucket_name.toLowerCase().includes('career') ? '💼' :
+                                     bucket.bucket_name.toLowerCase().includes('creative') || bucket.bucket_name.toLowerCase().includes('art') ? '🎨' :
+                                     bucket.bucket_name.toLowerCase().includes('gaming') || bucket.bucket_name.toLowerCase().includes('game') ? '🎮' :
+                                     bucket.bucket_name.toLowerCase().includes('development') || bucket.bucket_name.toLowerCase().includes('coding') ? '💻' :
+                                     bucket.bucket_name.toLowerCase().includes('academic') || bucket.bucket_name.toLowerCase().includes('education') ? '📚' :
+                                     bucket.bucket_name.toLowerCase().includes('financial') || bucket.bucket_name.toLowerCase().includes('finance') ? '💰' :
+                                     bucket.bucket_name.toLowerCase().includes('personal') || bucket.bucket_name.toLowerCase().includes('social') ? '🏠' :
+                                     bucket.bucket_name.toLowerCase().trim() === 'unassigned' ? '📂' :
+                                     '📁'}
+                                  </span>
+                                  <span className="text-sm font-medium flex-1 text-left">
+                                    {bucket.bucket_name}
+                                    {bucket.bucket_name.toLowerCase().trim() === 'unassigned' && (
+                                      <span className="ml-1 text-xs text-gray-500">(System)</span>
+                                    )}
+                                  </span>
+                                </button>
+                              </>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -491,9 +653,71 @@ function App() {
                   {/* Main Content - Account Details */}
                   <div className="col-span-6">
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                      <h3 className="text-2xl font-bold text-gray-900 mb-6">
-                        {selectedBucket ? buckets.find(b => b.id === selectedBucket)?.bucket_name : 'All Accounts'}
-                      </h3>
+                      <div className="flex items-center justify-between mb-6">
+                        {editingBucket === selectedBucket ? (
+                          <div className="flex items-center gap-3 flex-1">
+                            <input
+                              type="text"
+                              value={editBucketName}
+                              onChange={(e) => setEditBucketName(e.target.value)}
+                              onKeyPress={(e) => {
+                                if (e.key === 'Enter') {
+                                  updateBucket(selectedBucket, editBucketName);
+                                }
+                              }}
+                              className="text-2xl font-bold px-3 py-2 border border-blue-300 rounded-lg"
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => updateBucket(selectedBucket, editBucketName)}
+                              className="px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm"
+                            >
+                              Save
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingBucket(null);
+                                setEditBucketName('');
+                              }}
+                              className="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 text-sm"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="flex items-center gap-3">
+                              <h3 className="text-2xl font-bold text-gray-900">
+                                {selectedBucket ? buckets.find(b => b.id === selectedBucket)?.bucket_name : 'All Accounts'}
+                              </h3>
+                              {selectedBucket && buckets.find(b => b.id === selectedBucket)?.bucket_name.toLowerCase().trim() !== 'unassigned' && (
+                                <button
+                                  onClick={() => {
+                                    setEditingBucket(selectedBucket);
+                                    const bucket = buckets.find(b => b.id === selectedBucket);
+                                    setEditBucketName(bucket?.bucket_name || '');
+                                  }}
+                                  className="text-blue-500 hover:text-blue-700 text-sm font-bold"
+                                  title="Edit persona name"
+                                >
+                                  ✎
+                                </button>
+                              )}
+                            </div>
+                            {selectedBucket && buckets.find(b => b.id === selectedBucket)?.bucket_name.toLowerCase().trim() !== 'unassigned' && (
+                              <button
+                                onClick={() => confirmDeleteBucket(selectedBucket)}
+                                className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                                Delete Persona
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
                       
                       {accounts.filter(acc => !selectedBucket || acc.bucket?.id === selectedBucket).length === 0 ? (
                         <div className="text-center py-12">
@@ -557,11 +781,25 @@ function App() {
                   {/* Right Sidebar - Statistics */}
                   <div className="col-span-3">
                     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                      <h3 className="text-lg font-bold text-gray-900 mb-4">Statistics</h3>
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-bold text-gray-900">Statistics</h3>
+                        {selectedBucket && (
+                          <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full">
+                            {buckets.find(b => b.id === selectedBucket)?.bucket_name}
+                          </span>
+                        )}
+                      </div>
                       <div className="space-y-4">
                         <div>
-                          <p className="text-sm text-gray-600">Total Accounts</p>
-                          <p className="text-2xl font-bold text-gray-900">{accounts.length}</p>
+                          <p className="text-sm text-gray-600">
+                            {selectedBucket ? `${buckets.find(b => b.id === selectedBucket)?.bucket_name} Accounts` : 'Total Accounts'}
+                          </p>
+                          <p className="text-2xl font-bold text-gray-900">
+                            {selectedBucket 
+                              ? accounts.filter(a => a.bucket?.id === selectedBucket).length
+                              : accounts.length
+                            }
+                          </p>
                         </div>
                         <div>
                           <p className="text-sm text-gray-600">Total Buckets</p>
@@ -573,6 +811,98 @@ function App() {
                             {accounts.filter(a => !a.bucket).length}
                           </p>
                         </div>
+                        
+                        {/* AI Summary Section */}
+                        <div className="border-t border-gray-200 pt-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-sm font-semibold text-gray-700">AI Summary</h4>
+                            <button
+                              onClick={generateSummary}
+                              disabled={generatingSummary || (selectedBucket ? accounts.filter(a => a.bucket?.id === selectedBucket).length === 0 : accounts.length === 0)}
+                              className="px-3 py-1 text-xs bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-1"
+                            >
+                              {generatingSummary ? (
+                                <>
+                                  <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
+                                  Generating...
+                                </>
+                              ) : (
+                                'Generate Summary'
+                              )}
+                            </button>
+                          </div>
+                          
+                          {summary ? (
+                            <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-700 leading-relaxed">
+                              <div 
+                                className="markdown-content"
+                                dangerouslySetInnerHTML={{
+                                  __html: summary
+                                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                                    .replace(/^• (.+)$/gm, '<div class="ml-4">• $1</div>')
+                                    .replace(/\n\n/g, '<br/><br/>')
+                                    .replace(/\n/g, '<br/>')
+                                }}
+                              />
+                              
+                              {/* Split Personas Button */}
+                              <div className="mt-3 pt-3 border-t border-gray-200">
+                                <button
+                                  onClick={splitPersonas}
+                                  disabled={splittingPersonas || (selectedBucket ? accounts.filter(a => a.bucket?.id === selectedBucket).length === 0 : accounts.length === 0)}
+                                  className="w-full px-3 py-2 text-xs bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                >
+                                  {splittingPersonas ? (
+                                    <>
+                                      <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"></div>
+                                      Splitting Personas...
+                                    </>
+                                  ) : (
+                                    <>
+                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                                      </svg>
+                                      Split Personas
+                                    </>
+                                  )}
+                                </button>
+                                <p className="text-xs text-gray-500 mt-1 text-center">
+                                  Organize accounts into separate personas to prevent identity leakage
+                                </p>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-xs text-gray-500 italic">
+                              {selectedBucket 
+                                ? (accounts.filter(a => a.bucket?.id === selectedBucket).length === 0 
+                                    ? `No accounts found in ${buckets.find(b => b.id === selectedBucket)?.bucket_name} persona.`
+                                    : `Click 'Generate Summary' to get an AI analysis of your ${buckets.find(b => b.id === selectedBucket)?.bucket_name} persona based on discovered websites.`)
+                                : (accounts.length === 0 
+                                    ? "No accounts found. Search for accounts first to generate a summary."
+                                    : "Click 'Generate Summary' to get an AI analysis of your digital presence based on discovered websites.")
+                              }
+                            </div>
+                          )}
+                          
+                          {/* Persona Split Result */}
+                          {personaResult && (
+                            <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                              <h5 className="text-sm font-semibold text-green-800 mb-2">Personas Created Successfully!</h5>
+                              <div className="text-xs text-green-700 space-y-1">
+                                <p>• {personaResult.buckets_created} persona buckets created</p>
+                                <p>• {personaResult.accounts_assigned} accounts organized</p>
+                                <div className="mt-2">
+                                  <p className="font-medium">Personas:</p>
+                                  {personaResult.personas?.map((persona, index) => (
+                                    <div key={index} className="ml-2 text-xs">
+                                      <span className="font-medium">{persona.name}:</span> {persona.platforms.join(', ')}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -582,6 +912,47 @@ function App() {
           </main>
         </div>
       </SignedIn>
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-start gap-4 mb-4">
+              <div className="flex-shrink-0 w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-bold text-gray-900 mb-2">Delete Persona</h3>
+                <p className="text-sm text-gray-600 mb-1">
+                  Are you sure you want to delete <span className="font-semibold">{buckets.find(b => b.id === bucketToDelete)?.bucket_name}</span>?
+                </p>
+                <p className="text-sm text-red-600 font-medium">
+                  This action is irreversible. All accounts in this persona will be unassigned.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setBucketToDelete(null);
+                }}
+                className="px-4 py-2 text-sm bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={deleteBucket}
+                className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium"
+              >
+                Delete Permanently
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

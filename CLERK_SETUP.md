@@ -15,6 +15,7 @@ This guide will help you set up Clerk authentication for the Chimera project.
 
 ## Step 2: Get Your API Keys
 
+### Clerk API Keys
 After creating your application:
 
 1. Go to the Clerk Dashboard
@@ -22,6 +23,14 @@ After creating your application:
 3. Copy your keys:
    - **Publishable Key** (starts with `pk_test_...`)
    - **Secret Key** (starts with `sk_test_...`)
+
+### OpenAI API Key (for AI Summaries)
+1. Go to [https://platform.openai.com](https://platform.openai.com)
+2. Sign up or log in to your OpenAI account
+3. Navigate to **API Keys** in the left sidebar
+4. Click **Create new secret key**
+5. Copy the generated API key (starts with `sk-...`)
+6. **Important**: Keep this key secure and don't share it publicly
 
 ## Step 3: Configure Environment Variables
 
@@ -42,6 +51,9 @@ After creating your application:
    # Clerk Authentication
    CLERK_SECRET_KEY=sk_test_YOUR_SECRET_KEY_HERE
    CLERK_PUBLISHABLE_KEY=pk_test_YOUR_PUBLISHABLE_KEY_HERE
+   
+   # OpenAI API (for AI summaries)
+   OPENAI_API_KEY=sk-YOUR_OPENAI_API_KEY_HERE
    ```
 
 3. Create frontend `.env`:
