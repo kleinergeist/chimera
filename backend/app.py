@@ -45,6 +45,85 @@ def get_db():
     finally:
         db.close()
 
+
+def parse_gosearch_stdout(text: str) -> dict:
+    """Parse textual stdout from gosearch and return structured JSON.
+
+    Returns a dict with keys:
+      - platforms: list of {name, url, found}
+      - compromised_credentials: list of {email, password, source}
+    This is heuristic-based to handle the typical gosearch output format.
+    """
+    platforms = []
+    creds = []
+    if not text:
+        return {"platforms": platforms, "compromised_credentials": creds}
+
+    lines = text.splitlines()
+
+    # 1) Extract platform url lines like '[?] Threads: https://...' or '[+] Spotify:https://...'
+    plat_re = re.compile(r'^[\[\]\+\?\!\s-]*\s*([^:\[\]]+?)\s*[:\-]?\s*(https?://\S+)', re.IGNORECASE)
+    for line in lines:
+        m = plat_re.search(line.strip())
+        if m:
+            name = m.group(1).strip()
+            url = m.group(2).strip()
+            found = not line.strip().startswith('[?')
+            platforms.append({"name": name, "url": url, "found": found})
+
+    # 2) Extract ascii tables or simple rows containing email + password
+    # Look for table headers that contain EMAIL and PASSWORD or rows containing an email and a short password
+    header_idx = None
+    for i, line in enumerate(lines):
+        if 'EMAIL' in line.upper() and 'PASSWORD' in line.upper():
+            header_idx = i
+            break
+
+    if header_idx is not None:
+        # parse following rows until blank or separator
+        for j in range(header_idx + 1, len(lines)):
+            row = lines[j].strip()
+            if not row or set(row) <= set('┌┐└┘─┬┴│+|- '):
+                continue
+            # try boxed table row with separators │ or |
+            mbox = re.match(r'^[\│\|\s]*\d+\s*[\│\|]\s*(.*?)\s*[\│\|]\s*(.*?)\s*[\│\|]?', row)
+            if mbox:
+                email = mbox.group(1).strip()
+                password = mbox.group(2).strip()
+                if email and password:
+                    creds.append({"email": email, "password": password, "source": "ascii_table"})
+                continue
+            # fallback: split by pipes or multiple spaces
+            parts = [p.strip() for p in re.split(r'\|\||\s{2,}|\t', row) if p.strip()]
+            if parts:
+                # heuristic: find element containing '@'
+                email = next((p for p in parts if '@' in p), None)
+                if email:
+                    pw = next((p for p in parts if p != email), None)
+                    if pw:
+                        creds.append({"email": email, "password": pw, "source": "table_row"})
+
+    # 3) Fallback scan: regex search for lines containing email and a short token/password
+    simple_cred_re = re.compile(r'([A-Za-z0-9\.\_\-\+]+@[A-Za-z0-9\.\-]+\.[A-Za-z]{2,})\s+([^\s]{4,})')
+    for line in lines:
+        m = simple_cred_re.search(line)
+        if m:
+            email = m.group(1).strip()
+            password = m.group(2).strip()
+            if not any(c['email'] == email and c['password'] == password for c in creds):
+                creds.append({"email": email, "password": password, "source": "simple_regex"})
+
+    # de-duplicate platforms by URL
+    seen = set()
+    normalized = []
+    for p in platforms:
+        key = p.get('url') or p.get('name')
+        if key and key not in seen:
+            seen.add(key)
+            normalized.append(p)
+
+    return {"platforms": normalized, "compromised_credentials": creds}
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok", "message": "Chimera API is running"}
@@ -68,12 +147,23 @@ async def gosearch_proxy(username: str):
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"failed to reach gosearch service: {e}")
 
-    # Proxy the JSON response (or an error) through
+    # Proxy the JSON response (or an error) through. If the gosearch proxy returned
+    # an ExecResult containing raw stdout text, parse that stdout into structured
+    # JSON (platforms, compromised_credentials) so the backend can consume it.
     try:
         data = resp.json()
     except Exception:
         # Non-JSON response: return raw text
         return JSONResponse(status_code=resp.status_code, content={"text": resp.text})
+
+    # If data looks like ExecResult with a stdout string, parse it into structured JSON
+    stdout = None
+    if isinstance(data, dict):
+        stdout = data.get("stdout") or data.get("Stdout") or data.get("out")
+    if stdout and isinstance(stdout, str):
+        parsed = parse_gosearch_stdout(stdout)
+        # merge parsed keys but keep original ExecResult metadata
+        data.update(parsed)
 
     return JSONResponse(status_code=resp.status_code, content=data)
 
@@ -394,8 +484,13 @@ async def search_and_save_accounts(
 
         return creds
 
-    # Extract compromised credentials from gosearch output
-    creds_found = extract_credentials(gosearch_data)
+    # Extract compromised credentials from gosearch output. Prefer the parsed
+    # `compromised_credentials` if the proxy already parsed stdout; otherwise
+    # fall back to the recursive extractor which handles JSON structures.
+    if isinstance(gosearch_data, dict) and 'compromised_credentials' in gosearch_data:
+        creds_found = gosearch_data.get('compromised_credentials', []) or []
+    else:
+        creds_found = extract_credentials(gosearch_data)
     saved_credentials = 0
     for cred in creds_found:
         email = cred.get('email')
@@ -419,7 +514,7 @@ async def search_and_save_accounts(
     saved_count = 0
     
     for platform in platforms:
-        if platform.get("found"):
+        if platform.get("found") or platform.get("exists"):
             # Check if this account already exists for this user
             existing = db.query(DiscoveredAccount).join(DiagnosticSession).filter(
                 DiagnosticSession.user_id == user.id,
