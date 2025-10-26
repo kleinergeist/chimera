@@ -1,12 +1,13 @@
 import os
 import json
+import re
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import JSONResponse
 import httpx
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from models import Base, User, DiagnosticSession, DiscoveredAccount, UserBucket, AccountAssignment
+from models import Base, User, DiagnosticSession, DiscoveredAccount, UserBucket, AccountAssignment, CompromisedCredential
 from auth import get_current_user, get_clerk_user_id
 
 app = FastAPI(title="Chimera API", version="1.0.0")
@@ -323,6 +324,96 @@ async def search_and_save_accounts(
     db.commit()
     db.refresh(session)
     
+    # Helper: recursively extract credential pairs from gosearch JSON
+    def is_email_like(s):
+        try:
+            return bool(re.search(r"[\w\.-]+@[\w\.-]+\.[A-Za-z]{2,}", str(s)))
+        except Exception:
+            return False
+
+    def extract_credentials(obj, path="root"):
+        creds = []
+        # dicts that directly contain email/password-like keys
+        if isinstance(obj, dict):
+            keys = list(obj.keys())
+            lower_keys = [k.lower() for k in keys]
+            email_key = None
+            pass_key = None
+            for k in keys:
+                lk = k.lower()
+                if 'email' in lk or 'e-mail' in lk:
+                    email_key = k
+                if 'pass' in lk or 'pwd' in lk:
+                    pass_key = k
+            # Also allow values that look like emails even if key is different
+            if not email_key:
+                for k in keys:
+                    if is_email_like(obj.get(k)):
+                        email_key = k
+                        break
+            if email_key and pass_key:
+                creds.append({
+                    'email': obj.get(email_key),
+                    'password': obj.get(pass_key),
+                    'source': path,
+                    'meta': {k: v for k, v in obj.items() if k not in (email_key, pass_key)}
+                })
+
+            # recurse into values
+            for k, v in obj.items():
+                creds.extend(extract_credentials(v, path + f".{k}"))
+
+        elif isinstance(obj, list):
+            # list of dicts
+            if obj and all(isinstance(i, dict) for i in obj):
+                for idx, item in enumerate(obj):
+                    creds.extend(extract_credentials(item, path + f"[{idx}]"))
+            # possible table: first row headers
+            elif obj and all(isinstance(i, list) for i in obj) and len(obj) >= 2:
+                headers = obj[0]
+                if all(isinstance(h, str) for h in headers):
+                    low = [h.lower() for h in headers]
+                    try:
+                        email_idx = next(i for i, h in enumerate(low) if 'email' in h)
+                        pass_idx = next(i for i, h in enumerate(low) if 'pass' in h or 'password' in h)
+                        for row in obj[1:]:
+                            if len(row) > max(email_idx, pass_idx):
+                                em = row[email_idx]
+                                pw = row[pass_idx]
+                                if em and pw:
+                                    creds.append({'email': em, 'password': pw, 'source': path, 'meta': {}})
+                    except StopIteration:
+                        for idx, item in enumerate(obj):
+                            creds.extend(extract_credentials(item, path + f"[{idx}]"))
+                else:
+                    for idx, item in enumerate(obj):
+                        creds.extend(extract_credentials(item, path + f"[{idx}]"))
+            else:
+                for idx, item in enumerate(obj):
+                    creds.extend(extract_credentials(item, path + f"[{idx}]"))
+
+        return creds
+
+    # Extract compromised credentials from gosearch output
+    creds_found = extract_credentials(gosearch_data)
+    saved_credentials = 0
+    for cred in creds_found:
+        email = cred.get('email')
+        password = cred.get('password')
+        if not email or not password:
+            continue
+        # Save credential record
+        cc = CompromisedCredential(
+            session_id=session.id,
+            account_name=username,
+            email=str(email),
+            password=str(password),
+            source=cred.get('source'),
+            metadata=json.dumps(cred.get('meta', {}))
+        )
+        db.add(cc)
+        saved_credentials += 1
+
     # Parse and save discovered accounts
     platforms = gosearch_data.get("platforms", [])
     saved_count = 0
@@ -354,5 +445,6 @@ async def search_and_save_accounts(
         "username": username,
         "total_found": len(platforms),
         "new_accounts_saved": saved_count,
+        "compromised_credentials_saved": saved_credentials,
         "session_id": session.id
     }

@@ -32,6 +32,18 @@ class DiscoveredAccount(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     session = relationship('DiagnosticSession', back_populates='discovered_accounts')
 
+class CompromisedCredential(Base):
+    __tablename__ = 'compromised_credentials'
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, ForeignKey('diagnostic_sessions.id'))
+    account_name = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    password = Column(String, nullable=True)
+    source = Column(String, nullable=True)  # where it was found (tool/source/platform)
+    metadata = Column(Text)  # raw JSON or extra info
+    created_at = Column(DateTime, default=datetime.utcnow)
+    session = relationship('DiagnosticSession', back_populates='compromised_credentials')
+
 class UserBucket(Base):
     __tablename__ = 'user_buckets'
     id = Column(Integer, primary_key=True)
@@ -55,6 +67,7 @@ class AccountAssignment(Base):
 
 User.diagnostic_sessions = relationship('DiagnosticSession', order_by=DiagnosticSession.id, back_populates='user')
 DiagnosticSession.discovered_accounts = relationship('DiscoveredAccount', order_by=DiscoveredAccount.id, back_populates='session')
+DiagnosticSession.compromised_credentials = relationship('CompromisedCredential', order_by='CompromisedCredential.id', back_populates='session')
 User.user_buckets = relationship('UserBucket', order_by=UserBucket.id, back_populates='user')
 DiscoveredAccount.account_assignments = relationship('AccountAssignment', order_by=AccountAssignment.id, back_populates='account')
 UserBucket.account_assignments = relationship('AccountAssignment', order_by=AccountAssignment.id, back_populates='bucket')
